@@ -1,3 +1,4 @@
+// index.js
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -13,12 +14,12 @@ const {
     submitDailyLog, 
     getSalaryAnalysis,
     getLogbookHistory,
-    getParticipantInfo // <--- Import helper untuk ambil ID peserta
+    getParticipantInfo 
 } = require('./services/api/monev-api'); 
 
 const { summarizeLogbook } = require('./utils/llm'); 
 const { getCombinedProfile } = require('./services/profile-service');
-const { getExcludeDays, setExcludeDays } = require('./services/settings-service'); // <--- Import Service Setting Baru
+const { getExcludeDays, setExcludeDays } = require('./services/settings-service');
 
 const app = express();
 app.use(cors());
@@ -37,25 +38,21 @@ const requireToken = (req, res, next) => {
     next();
 };
 
-// [BARU] MIDDLEWARE: Mengambil ID Peserta & Hari Libur dari Settings
+// MIDDLEWARE: Mengambil ID Peserta & Hari Libur dari Settings
 const requireParticipant = async (req, res, next) => {
-    // Pastikan token sudah ada dari requireToken
     if (!req.userToken) return res.status(401).json({ message: 'Token missing in requireParticipant' });
 
     try {
-        // Panggil helper untuk mendapatkan ID peserta
-        const info = await getParticipantInfo(req.userToken); //
-        req.participantId = info.id; // Simpan ID peserta
+        const info = await getParticipantInfo(req.userToken); 
+        req.participantId = info.id; 
         
         // Ambil hari libur dari file settings berdasarkan ID
         req.excludeDays = getExcludeDays(info.id); 
         next();
     } catch (e) {
-        // Jika token valid tapi gagal fetch ID, kemungkinan token expired atau API Monev down
-        res.status(401).json({ message: 'Failed to verify token or fetch participant info. Please login again.', error: e.message });
+        res.status(401).json({ message: 'Failed to verify token or fetch participant info.', error: e.message });
     }
 }
-// -----------------------------------------------------------
 
 // --- HELPER (Legacy) ---
 async function getUserMonevProfile(token) {
@@ -69,7 +66,7 @@ async function getUserMonevProfile(token) {
 
 // --- ENDPOINTS ---
 
-// 1. Login (SSO -> Puppeteer -> Return Tokens)
+// 1. Login
 app.post('/api/login', async (req, res) => {
     req.setTimeout(120000); 
     try {
@@ -89,7 +86,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// 2. Get Profile (Gabungan Monev + Foto/Logo MagangHub)
+// 2. Get Profile
 app.get('/api/profile', requireToken, async (req, res) => {
     try {
         const magangToken = req.headers['x-magang-token'];
@@ -101,7 +98,7 @@ app.get('/api/profile', requireToken, async (req, res) => {
     }
 });
 
-// 3. Dashboard Check (Apakah hari ini sudah isi?)
+// 3. Dashboard Check
 app.get('/api/dashboard', requireToken, async (req, res) => {
     try {
         const isSubmitted = await todaySubmitted(req.userToken);
@@ -111,11 +108,10 @@ app.get('/api/dashboard', requireToken, async (req, res) => {
     }
 });
 
-// 4. Salary Analysis & Tanggal Bolong (Menerima excludeDays dari Middleware)
+// 4. Salary Analysis
 app.get('/api/salary-analysis', requireToken, requireParticipant, async (req, res) => {
     try {
-        // Mengirim excludeDays (hari libur user) dari middleware ke fungsi analisis
-        const analysis = await getSalaryAnalysis(req.userToken, req.excludeDays); //
+        const analysis = await getSalaryAnalysis(req.userToken, req.excludeDays); 
         res.json({ status: 'success', data: analysis });
     } catch (error) {
         console.error("Salary Analysis Error:", error.message);
@@ -123,7 +119,7 @@ app.get('/api/salary-analysis', requireToken, requireParticipant, async (req, re
     }
 });
 
-// 5. History Logbook (Filter by Month/Year)
+// 5. History Logbook
 app.get('/api/history', requireToken, async (req, res) => {
     try {
         const { month, year } = req.query; 
@@ -161,12 +157,12 @@ app.post('/api/submit-final', requireToken, async (req, res) => {
     }
 });
 
-// 8. Refresh Token (Placeholder)
+// 8. Refresh Token
 app.post('/api/refresh-token', async (req, res) => {
     res.status(401).json({ status: 'auth_error', message: 'Silakan login ulang.' });
 });
 
-// 9. [BARU] Endpoint Pengaturan Hari Libur (GET)
+// 9. Settings: Get Work Days
 app.get('/api/settings/work-days', requireToken, requireParticipant, async (req, res) => {
     const dayMap = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     res.json({ 
@@ -177,10 +173,10 @@ app.get('/api/settings/work-days', requireToken, requireParticipant, async (req,
     });
 });
 
-// 10. [BARU] Endpoint Pengaturan Hari Libur (POST: Mengubah)
+// 10. Settings: Update Work Days
 app.post('/api/settings/work-days', requireToken, requireParticipant, async (req, res) => {
     try {
-        const { excludeDays } = req.body; // Expects body: { excludeDays: [0, 1] }
+        const { excludeDays } = req.body; 
         if (!excludeDays || !Array.isArray(excludeDays)) {
             return res.status(400).json({ message: "Body harus berupa array 'excludeDays' [0-6]." });
         }
@@ -200,9 +196,19 @@ app.post('/api/settings/work-days', requireToken, requireParticipant, async (req
     }
 });
 
+// =============================================================
+// 👇 PERBAIKAN PENTING UNTUK VERCEL 👇
+// =============================================================
 
-// --- SERVER START ---
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server Ready at http://localhost:${PORT} 🚀`);
-});
+
+// Logika: Kalau file ini dijalankan langsung (node index.js), jalankan server.
+// Kalau di-import oleh Vercel, jangan jalankan listen (biar Vercel yang handle).
+if (require.main === module) {
+    app.listen(PORT, () => {
+        console.log(`Server is running locally on port ${PORT} 🚀`);
+    });
+}
+
+// Export 'app' supaya Vercel bisa membacanya sebagai Serverless Function
+module.exports = app;
